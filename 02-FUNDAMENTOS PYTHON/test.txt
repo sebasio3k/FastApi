@@ -1,0 +1,6 @@
+This is a test file.
+It contains some sample text.
+This is the third lines.
+
+This is a new line.
+This is an appended line.
