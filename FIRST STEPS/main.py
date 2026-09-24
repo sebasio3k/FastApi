@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Query, Body
+from fastapi import FastAPI, HTTPException, Query, Body, Path
 from pydantic import BaseModel, Field, field_validator, EmailStr
 from typing import Optional, List, Union
 
@@ -54,7 +54,7 @@ class Author(BaseModel):
 class PostBase(BaseModel):
     title: str
     content: str
-    tags: Optional[List[Tag]] = []
+    tags: Optional[List[Tag]] = Field(default_factory=list) # [] 
     author: Optional[Author] = None
     
 class PostCreate(BaseModel):
@@ -73,8 +73,8 @@ class PostCreate(BaseModel):
         examples=["This is the content of the post."]
     )
     # tags: List[Tag] = []
-    tags: list[Tag] = Field(
-        default=[],
+    tags: List[Tag] = Field(
+        default_factory=list,
         examples=[[{"name": "python"}, {"name": "fastapi"}]],
     )
     author: Optional[Author] = None
@@ -87,6 +87,7 @@ class PostCreate(BaseModel):
         return value
     
     @field_validator("title")
+    @classmethod
     def not_allow_bad_words(cls, value):
         for bad_word in BAD_WORDS:
             if bad_word in value:
@@ -132,7 +133,13 @@ def list_post(query: str | None = Query(default=None, description="Text to searc
     
 
 @app.get("/post/{post_id}", response_model=Union[PostSummary,PostPublic], response_description="The post details.")
-def get_post(post_id: int, include_content: bool = Query(default=True, description="Whether to include the content of the post in the response.")):
+def get_post(post_id: int = Path(
+        ..., 
+        gt=0,
+        title="Post ID",
+        description="The ID of the post to retrieve.",
+        examples=[1,2,3]
+    ), include_content: bool = Query(default=True, description="Whether to include the content of the post in the response.")):
     for post in BLOG_POSTS:
         print(post)
         if post["id"] == post_id:
