@@ -122,7 +122,15 @@ def list_all_posts():
 
 
 @app.get("/post", response_model=List[PostPublic])
-def list_post(query: str | None = Query(default=None, description="Text to search for in the post titles.")):
+def list_post(query: Optional[str] = Query(
+        default=None, 
+        description="Text to search for in the post titles.",
+        alias="search",
+        min_length=3,
+        max_length=50,
+        pattern=r"^[\w\sáéíóúÁÉÍÓüÜ-]+$"
+        # pattern=r"^[a-zA-Z]+$"
+    )):
     if query:
         filtered_posts = [post for post in BLOG_POSTS if query.lower() in post["title"].lower()]
         print(f'Filtered posts: {filtered_posts}')
