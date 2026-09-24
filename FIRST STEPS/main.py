@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException, Query, Body, Path
 from pydantic import BaseModel, Field, field_validator, EmailStr
-from typing import Optional, List, Union
+from typing import Optional, List, Union, Literal
 
 app = FastAPI(
     title="Mini Blog", 
@@ -23,6 +23,41 @@ BLOG_POSTS = [
         "id": 3,
         "title": "Third Post",
         "content": "This is the content of the third post."
+    },
+    {
+        "id": 4,
+        "title": "Fourth Post",
+        "content": "This is the content of the fourth post."
+    },
+    {
+        "id": 5,
+        "title": "Fifth Post",
+        "content": "This is the content of the fifth post."
+    },
+    {
+        "id": 6,
+        "title": "Sixth Post",
+        "content": "This is the content of the sixth post."
+    },
+    {
+        "id": 7,
+        "title": "Seventh Post",
+        "content": "This is the content of the seventh post."
+    },
+    {
+        "id": 8,
+        "title": "Eighth Post",
+        "content": "This is the content of the eighth post."
+    },
+    {
+        "id": 9,
+        "title": "Ninth Post",
+        "content": "This is the content of the ninth post."
+    },
+    {
+        "id": 10,
+        "title": "Tenth Post",
+        "content": "This is the content of the tenth post."
     }
 ]
 
@@ -123,18 +158,35 @@ def list_all_posts():
 
 @app.get("/post", response_model=List[PostPublic])
 def list_post(query: Optional[str] = Query(
-        default=None, 
-        description="Text to search for in the post titles.",
-        alias="search",
-        min_length=3,
-        max_length=50,
-        pattern=r"^[\w\sáéíóúÁÉÍÓüÜ-]+$"
-        # pattern=r"^[a-zA-Z]+$"
-    )):
+            default=None, 
+            description="Text to search for in the post titles.",
+            alias="search",
+            min_length=3,
+            max_length=50,
+            pattern=r"^[\w\sáéíóúÁÉÍÓüÜ-]+$"
+            # pattern=r"^[a-zA-Z]+$"
+        ),
+        limit: int = Query(
+            default=10, ge=1, le=50,
+            description="The maximum number of posts to return (1-50)."
+        ),
+        offset: int = Query(
+            default=0, ge=0, le=100,
+            description="The number of posts to skip (0-1000)."
+        ),
+        order_by: Literal["id", "title"] = Query(
+            "id", description="The field to order the posts by."
+        ),
+        direction: Literal["asc", "desc"] = Query(
+            "asc", description="The direction to order the posts by."
+        )
+    ):
+    results = BLOG_POSTS
     if query:
-        filtered_posts = [post for post in BLOG_POSTS if query.lower() in post["title"].lower()]
-        print(f'Filtered posts: {filtered_posts}')
-        return filtered_posts
+        results = [post for post in results if query.lower() in post["title"].lower()]
+        results = sorted(results, key=lambda post: post[order_by], reverse=(direction == "desc"))
+        print(f'Filtered posts: {results}')
+        return results[offset:offset+limit]
     else:
         # return {"data": "No search query provided."}
         return BLOG_POSTS
