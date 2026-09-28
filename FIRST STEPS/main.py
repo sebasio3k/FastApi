@@ -1,3 +1,5 @@
+from math import ceil
+
 from fastapi import FastAPI, HTTPException, Query, Body, Path
 from pydantic import BaseModel, Field, field_validator, EmailStr
 from typing import Optional, List, Union, Literal
@@ -145,6 +147,24 @@ class PatchPost(BaseModel):
     content: Optional[str] = None
     tags: Optional[List[Tag]] = None
     
+class PaginatedPost(BaseModel):
+    total: int
+    limit: int
+    offset: int
+    items: List[PostPublic]
+    
+class PaginatedPostSummary(BaseModel):
+    page: int
+    per_page: int
+    total: int
+    total_pages: int
+    has_prev: bool
+    has_next: bool
+    order_by: Literal["id", "title"]
+    direction: Literal["asc", "desc"]
+    search: Optional[str] = None
+    items: List[PostPublic]
+    
 
 @app.get("/")
 def home():
@@ -156,7 +176,7 @@ def list_all_posts():
     return  BLOG_POSTS
 
 
-@app.get("/post", response_model=List[PostPublic])
+@app.get("/post", response_model=PaginatedPostSummary)
 def list_post(query: Optional[str] = Query(
             default=None, 
             description="Text to search for in the post titles.",
@@ -170,9 +190,13 @@ def list_post(query: Optional[str] = Query(
             default=10, ge=1, le=50,
             description="The maximum number of posts to return (1-50)."
         ),
-        offset: int = Query(
-            default=0, ge=0, le=100,
-            description="The number of posts to skip (0-1000)."
+        # offset: int = Query(
+        #     default=0, ge=0, le=100,
+        #     description="The number of posts to skip (0-1000)."
+        # ),
+        page : int = Query(
+            default=1, ge=1,
+            description="The page number greater than 0."
         ),
         order_by: Literal["id", "title"] = Query(
             "id", description="The field to order the posts by."
@@ -181,15 +205,45 @@ def list_post(query: Optional[str] = Query(
             "asc", description="The direction to order the posts by."
         )
     ):
+    
     results = BLOG_POSTS
+    
     if query:
         results = [post for post in results if query.lower() in post["title"].lower()]
-        results = sorted(results, key=lambda post: post[order_by], reverse=(direction == "desc"))
-        print(f'Filtered posts: {results}')
-        return results[offset:offset+limit]
+    
+    total = len(results)
+    total_pages = ceil(total / limit) if total > 0 else 0
+    
+    if total_pages == 0:
+        current_page = 1
     else:
-        # return {"data": "No search query provided."}
-        return BLOG_POSTS
+        current_page = min(page, total_pages)
+    
+    results = sorted(results, key=lambda post: post[order_by], reverse=(direction == "desc"))
+    
+    if total_pages == 0:
+        items = []
+    else:
+        # items = results[offset:offset+limit]
+        # items = [PostPublic(**post) for post in results[offset:offset+limit]]
+        start = (current_page - 1) * limit
+        items = [PostPublic(**post) for post in results[start:start+limit]]
+        
+    has_prev = current_page > 1
+    has_next = current_page < total_pages
+    
+    return PaginatedPostSummary(
+        page = current_page,
+        per_page = limit,
+        total=total,
+        total_pages=total_pages,
+        has_prev=has_prev,
+        has_next=has_next,
+        order_by=order_by,
+        direction=direction,
+        search=query,
+        items=items
+    )
     
 
 @app.get("/post/{post_id}", response_model=Union[PostSummary,PostPublic], response_description="The post details.")
