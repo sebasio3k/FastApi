@@ -178,7 +178,13 @@ def list_all_posts():
 
 
 @app.get("/post", response_model=PaginatedPostSummary)
-def list_post(query: Optional[str] = Query(
+def list_post(
+        text: Optional[str] = Query(
+            default=None, 
+            description="Text to search for in the post titles. deprecated",
+            deprecated=True
+        ),
+        query: Optional[str] = Query(
             default=None, 
             description="Text to search for in the post titles.",
             alias="search",
@@ -206,6 +212,8 @@ def list_post(query: Optional[str] = Query(
             "asc", description="The direction to order the posts by."
         )
     ):
+    
+    query = query or text
     
     results = BLOG_POSTS
     
