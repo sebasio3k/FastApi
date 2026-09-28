@@ -59,7 +59,8 @@ BLOG_POSTS = [
     {
         "id": 10,
         "title": "Tenth Post",
-        "content": "This is the content of the tenth post."
+        "content": "This is the content of the tenth post.",
+        "tags": [{"name": "tag1"}, {"name": "tag2"}, {"name": "tag3"}]
     }
 ]
 
@@ -245,6 +246,19 @@ def list_post(query: Optional[str] = Query(
         items=items
     )
     
+@app.get("/posts/by-tags/", response_model=List[PostPublic])
+def filter_by_tags(
+    tags: List[str] = Query(
+        ..., 
+        min_items=2,
+        description="The tags to filter by. Eg: ?tags=tag1&tags=tag2",
+        
+        )):
+    tags_lower = [tag.lower() for tag in tags]
+    
+    return [
+        post for post in BLOG_POSTS if any(tag["name"].lower() in tags_lower for tag in post.get("tags", []))
+    ]
 
 @app.get("/post/{post_id}", response_model=Union[PostSummary,PostPublic], response_description="The post details.")
 def get_post(post_id: int = Path(
