@@ -1,12 +1,15 @@
 import os
 from math import ceil
+from datetime import datetime
 
-from fastapi import FastAPI, HTTPException, Query, Body, Path
-from pydantic import BaseModel, Field, field_validator, EmailStr
+from fastapi import FastAPI, HTTPException, Query, Body, Path, status, Depends
+from pydantic import BaseModel, ConfigDict, Field, field_validator, EmailStr
 from typing import Optional, List, Union, Literal
 
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy import create_engine, Integer, String, Text, DateTime
+from sqlalchemy.orm import sessionmaker, Session, DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy.exc import SQLAlchemyError
+
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./blog.db")
 print(f'Connnecting to {DATABASE_URL}')
@@ -14,16 +17,44 @@ print(f'Connnecting to {DATABASE_URL}')
 engine_kwargs = {}
 if DATABASE_URL.startswith("mysql"):
     engine_kwargs["connect_args"] = {"check_same_thread": False}
-    
-# echo=True to see the SQL queries, future=True to use new features, 
+
+# echo=True to see the SQL queries, future=True to use new features,
 # **engine_kwargs to pass extra arguments only if we use mysql
 engine = create_engine(DATABASE_URL, echo=True, future=True, **engine_kwargs)
 
 # autoflush=False to not commit the changes to the database automatically,
 # autocommit=False to not commit the changes to the database automatically
-local_session = sessionmaker(bind=engine, autoflush=False, autocommit=False, class_=Session)
+LocalSession = sessionmaker(
+    bind=engine, autoflush=False, autocommit=False, class_=Session)
 
 
+# Declarative base class
+class Base(DeclarativeBase):
+    pass
+
+
+def get_db():
+    db = LocalSession()
+    try:
+        yield db  # generator expression
+    finally:
+        db.close()
+
+
+# MODELS
+class PostORM(Base):
+    __tablename__ = "posts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    title: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False,
+        default=datetime.utcnow
+    )
+
+
+Base.metadata.create_all(bind=engine)  # development only
 
 app = FastAPI(
     title="Mini Blog", 
@@ -157,6 +188,8 @@ class PostCreate(BaseModel):
 class PostPublic(PostBase): 
     id: int
     
+    model_config = ConfigDict(from_attributes=True)
+    
 class PostSummary(BaseModel):
     id: int
     title: str
@@ -200,6 +233,83 @@ def list_all_posts():
 
 @app.get("/post", response_model=PaginatedPostSummary)
 def list_post(
+        text: Optional[str] = Query(
+            default=None, 
+            description="Text to search for in the post titles. deprecated",
+            deprecated=True
+        ),
+        query: Optional[str] = Query(
+            default=None, 
+            description="Text to search for in the post titles.",
+            alias="search",
+            min_length=3,
+            max_length=50,
+            pattern=r"^[\w\sáéíóúÁÉÍÓüÜ-]+$"
+            # pattern=r"^[a-zA-Z]+$"
+        ),
+        limit: int = Query(
+            default=10, ge=1, le=50,
+            description="The maximum number of posts to return (1-50)."
+        ),
+        # offset: int = Query(
+        #     default=0, ge=0, le=100,
+        #     description="The number of posts to skip (0-1000)."
+        # ),
+        page : int = Query(
+            default=1, ge=1,
+            description="The page number greater than 0."
+        ),
+        order_by: Literal["id", "title"] = Query(
+            "id", description="The field to order the posts by."
+        ),
+        direction: Literal["asc", "desc"] = Query(
+            "asc", description="The direction to order the posts by."
+        )
+    ):
+    
+    query = query or text
+    
+    results = BLOG_POSTS
+    
+    if query:
+        results = [post for post in results if query.lower() in post["title"].lower()]
+    
+    total = len(results)
+    total_pages = ceil(total / limit) if total > 0 else 0
+    
+    if total_pages == 0:
+        current_page = 1
+    else:
+        current_page = min(page, total_pages)
+    
+    results = sorted(results, key=lambda post: post[order_by], reverse=(direction == "desc"))
+    
+    if total_pages == 0:
+        items = []
+    else:
+        # items = results[offset:offset+limit]
+        # items = [PostPublic(**post) for post in results[offset:offset+limit]]
+        start = (current_page - 1) * limit
+        items = [PostPublic(**post) for post in results[start:start+limit]]
+        
+    has_prev = current_page > 1
+    has_next = current_page < total_pages
+    
+    return PaginatedPostSummary(
+        page = current_page,
+        per_page = limit,
+        total=total,
+        total_pages=total_pages,
+        has_prev=has_prev,
+        has_next=has_next,
+        order_by=order_by,
+        direction=direction,
+        search=query,
+        items=items
+    )
+    
+@app.get("/postV2", response_model=PaginatedPostSummary)
+def list_post_v2(
         text: Optional[str] = Query(
             default=None, 
             description="Text to search for in the post titles. deprecated",
@@ -323,7 +433,7 @@ def create_post(post: dict = Body(..., description="The post data to create.")):
     
     return {"message": "Post Created", "data": new_post}
 
-@app.post("/newPostv2", response_model=PostPublic, response_description="The created post details.")
+@app.post("/newPostV2", response_model=PostPublic, response_description="The created post details.")
 def create_post_v2(post: PostCreate):
     new_id = (BLOG_POSTS[-1]["id"]+1) if BLOG_POSTS else 1
     new_post = {
@@ -337,6 +447,21 @@ def create_post_v2(post: PostCreate):
     
     # return {"message": "Post Created v2", "data": new_post}
     return new_post
+
+@app.post("/newPostV3", response_model=PostPublic, response_description="The created post details.", status_code=status.HTTP_201_CREATED)
+def create_post_v3(post: PostCreate, db: Session = Depends(get_db)):
+    
+    new_post = PostORM(title=post.title, content=post.content)
+    
+    try:
+        db.add(new_post)
+        db.commit()
+        db.refresh(new_post)
+        return new_post
+    except SQLAlchemyError as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f" >>> COULD NOT CREATE POST: {e}")
+    
 
 @app.put("/post/{post_id}", response_model=PostPublic, response_description="The updated post details.", response_model_exclude_none=True)
 def uptade_post(post_id: int, data: PostUpdate):
