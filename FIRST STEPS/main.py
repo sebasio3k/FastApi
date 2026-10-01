@@ -2,7 +2,7 @@ import os
 from math import ceil
 from datetime import datetime
 
-from fastapi import FastAPI, HTTPException, Query, Body, Path, status, Depends
+from fastapi import FastAPI, HTTPException, Query, Body, Path, status, Depends, Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator, EmailStr
 from typing import Optional, List, Union, Literal
 
@@ -506,6 +506,27 @@ def uptade_post(post_id: int, data: PostUpdate):
     # return {"error": "Post not found"}
     raise HTTPException(status_code=404, detail="Post not found")
 
+@app.put("/postV2/{post_id}", response_model=PostPublic, response_description="The updated post details.", response_model_exclude_none=True)
+def uptade_post_v2(post_id: int, data: PostUpdate, db: Session = Depends(get_db)):
+    
+    post = db.query(PostORM).filter(PostORM.id == post_id).first()
+    
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    
+    try:
+        playload = data.model_dump(exclude_unset=True) # model_dump() returns a dictionary
+        # update post with settattr
+        for key, value in playload.items():
+            setattr(post, key, value)
+        
+        db.commit()
+        db.refresh(post)
+        return post
+    except SQLAlchemyError as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f" >>> COULD NOT UPDATE POST: {e}")
+
 @app.patch("/post/{post_id}")
 def patch_post(post_id: int, data: PatchPost):
     
@@ -521,7 +542,7 @@ def patch_post(post_id: int, data: PatchPost):
     # return {"error": "Post not found"}
     raise HTTPException(status_code=404, detail="Post not found")
     
-@app.delete("/post/{post_id}", status_code=204)
+@app.delete("/post/{post_id}", status_code=status.HTTP_204_NO_CONTENT, deprecated=True)
 def delete_post(post_id: int):
     for index, post in enumerate(BLOG_POSTS):
     # for post in BLOG_POSTS:
@@ -532,3 +553,18 @@ def delete_post(post_id: int):
             return
     
     raise HTTPException(status_code=404, detail="Post not found")
+
+@app.delete("/postV2/{post_id}", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)
+def delete_post_v2(post_id: int, db: Session = Depends(get_db)):
+    post = db.query(PostORM).filter(PostORM.id == post_id).first()
+    
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    
+    try:
+        db.delete(post)
+        db.commit()
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    except SQLAlchemyError as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f" >>> COULD NOT DELETE POST: {e}")
