@@ -6,7 +6,7 @@ from fastapi import FastAPI, HTTPException, Query, Body, Path, status, Depends
 from pydantic import BaseModel, ConfigDict, Field, field_validator, EmailStr
 from typing import Optional, List, Union, Literal
 
-from sqlalchemy import create_engine, Integer, String, Text, DateTime
+from sqlalchemy import create_engine, Integer, String, Text, DateTime, select, func
 from sqlalchemy.orm import sessionmaker, Session, DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -324,7 +324,7 @@ def list_post_v2(
             pattern=r"^[\w\sáéíóúÁÉÍÓüÜ-]+$"
             # pattern=r"^[a-zA-Z]+$"
         ),
-        limit: int = Query(
+        per_page: int = Query(
             default=10, ge=1, le=50,
             description="The maximum number of posts to return (1-50)."
         ),
@@ -341,40 +341,39 @@ def list_post_v2(
         ),
         direction: Literal["asc", "desc"] = Query(
             "asc", description="The direction to order the posts by."
-        )
+        ),
+        db: Session = Depends(get_db)
     ):
     
     query = query or text
     
-    results = BLOG_POSTS
+    results = select(PostORM)
     
     if query:
-        results = [post for post in results if query.lower() in post["title"].lower()]
+        results = results.where(PostORM.title.ilike(f"%{query}%"))
     
-    total = len(results)
-    total_pages = ceil(total / limit) if total > 0 else 0
+    total = db.scalar(select(func.count()).select_from(results.subquery())) or 0
+    total_pages = ceil(total / per_page) if total > 0 else 0
+    
+    current_page = 1 if total_pages == 0 else min(page, total_pages)
+    
+    # results = sorted(results, key=lambda post: post[order_by], reverse=(direction == "desc"))
+    
+    order_column = PostORM.id if order_by == "id" else func.lower(PostORM.title)
+    results = results.order_by(order_column.asc() if direction == "asc" else order_column.desc())
     
     if total_pages == 0:
-        current_page = 1
+        items: List[PostORM] = []
     else:
-        current_page = min(page, total_pages)
-    
-    results = sorted(results, key=lambda post: post[order_by], reverse=(direction == "desc"))
-    
-    if total_pages == 0:
-        items = []
-    else:
-        # items = results[offset:offset+limit]
-        # items = [PostPublic(**post) for post in results[offset:offset+limit]]
-        start = (current_page - 1) * limit
-        items = [PostPublic(**post) for post in results[start:start+limit]]
+        start = (current_page - 1) * per_page
+        items = db.execute(results.limit(per_page).offset(start)).scalars().all()
         
     has_prev = current_page > 1
     has_next = current_page < total_pages
     
     return PaginatedPostSummary(
         page = current_page,
-        per_page = limit,
+        per_page = per_page,
         total=total,
         total_pages=total_pages,
         has_prev=has_prev,
