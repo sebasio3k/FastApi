@@ -6,9 +6,9 @@ from fastapi import FastAPI, HTTPException, Query, Body, Path, status, Depends, 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, EmailStr
 from typing import Optional, List, Union, Literal
 
-from sqlalchemy import create_engine, Integer, String, Text, DateTime, select, func
+from sqlalchemy import create_engine, Integer, String, Text, DateTime, select, func, UniqueConstraint
 from sqlalchemy.orm import sessionmaker, Session, DeclarativeBase, Mapped, mapped_column, relationship
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./blog.db")
@@ -44,6 +44,7 @@ def get_db():
 # MODELS
 class PostORM(Base):
     __tablename__ = "posts"
+    __table_args__ = (UniqueConstraint("title", name="title_unique"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     title: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
@@ -486,9 +487,14 @@ def create_post_v3(post: PostCreate, db: Session = Depends(get_db)):
         db.commit()
         db.refresh(new_post)
         return new_post
+    except IntegrityError as e:
+        db.rollback()
+        print(f">>> IntegrityError: {e}")
+        raise HTTPException(status_code=409, detail=f"POST ALREADY EXISTS")
     except SQLAlchemyError as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=f" >>> COULD NOT CREATE POST: {e}")
+        print(f">>> SQLAlchemyError: {e}")
+        raise HTTPException(status_code=500, detail=f"COULD NOT CREATE POST")
     
 
 @app.put("/post/{post_id}", response_model=PostPublic, response_description="The updated post details.", response_model_exclude_none=True)
