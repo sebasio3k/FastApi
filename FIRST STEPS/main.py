@@ -193,6 +193,8 @@ class PostPublic(PostBase):
 class PostSummary(BaseModel):
     id: int
     title: str
+    
+    model_config = ConfigDict(from_attributes=True) # to validate objects
 
 class PostUpdate(PostBase):
     pass
@@ -417,6 +419,33 @@ def get_post(post_id: int = Path(
 
     # post = next((post for post in BLOG_POSTS if post["id"] == post_id), None)
     raise HTTPException(status_code=404, detail="Post not found")
+    
+@app.get("/postV2/{post_id}", response_model=Union[PostSummary,PostPublic], response_description="The post details.")
+def get_post_v2(post_id: int = Path(
+        ..., 
+        gt=0,
+        title="Post ID",
+        description="The ID of the post to retrieve.",
+        examples=[1,2,3]
+        ), 
+        include_content: bool = Query(default=True, description="Whether to include the content of the post in the response."),
+        db: Session = Depends(get_db)
+    ):
+    
+    # Alternative
+    # post_found = db.query(PostORM).filter(PostORM.id == post_id).first()
+    # post_found = select(PostORM).where(PostORM.id == post_id)
+    # post = db.execute(post_found).scalar_one_or_none()
+    
+    post = db.get(PostORM, post_id)
+    
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    
+    if include_content:
+        return PostPublic.model_validate(post, from_attributes=True)
+    
+    return PostSummary.model_validate(post, from_attributes=True)
     
 @app.post("/newPost")
 def create_post(post: dict = Body(..., description="The post data to create.")):
